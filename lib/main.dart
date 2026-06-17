@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'register_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -50,8 +51,6 @@ class _LoginScreenState extends State<LoginScreen> {
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               const SizedBox(height: 60),
-
-              // Logo
               Container(
                 width: 100,
                 height: 100,
@@ -65,10 +64,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   color: Colors.white,
                 ),
               ),
-
               const SizedBox(height: 24),
-
-              // Title
               const Text(
                 'Secure Exam App',
                 style: TextStyle(
@@ -77,9 +73,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   color: Color(0xFF1565C0),
                 ),
               ),
-
               const SizedBox(height: 8),
-
               const Text(
                 'Sign in to continue',
                 style: TextStyle(
@@ -87,10 +81,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   color: Colors.grey,
                 ),
               ),
-
               const SizedBox(height: 48),
-
-              // Email field
               TextField(
                 controller: _emailController,
                 keyboardType: TextInputType.emailAddress,
@@ -104,10 +95,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   fillColor: Colors.white,
                 ),
               ),
-
               const SizedBox(height: 16),
-
-              // Password field
               TextField(
                 controller: _passwordController,
                 obscureText: _obscurePassword,
@@ -133,10 +121,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   fillColor: Colors.white,
                 ),
               ),
-
               const SizedBox(height: 24),
-
-              // Login button
               SizedBox(
                 width: double.infinity,
                 height: 56,
@@ -160,16 +145,20 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
               ),
-
               const SizedBox(height: 16),
-
-              // Register link
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   const Text("Don't have an account? "),
                   GestureDetector(
-                    onTap: () {},
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const RegisterScreen(),
+                        ),
+                      );
+                    },
                     child: const Text(
                       'Register',
                       style: TextStyle(
@@ -180,7 +169,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ],
               ),
-
               const SizedBox(height: 40),
             ],
           ),
