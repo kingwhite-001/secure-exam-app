@@ -3,6 +3,8 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'register_screen.dart';
+import 'student_dashboard.dart';
+import 'lecturer_dashboard.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -68,12 +70,21 @@ class _LoginScreenState extends State<LoginScreen> {
       final name = userDoc.data()?['name'] ?? '';
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Welcome $name! Logged in as $role'),
-            backgroundColor: Colors.green,
-          ),
-        );
+        if (role == 'lecturer') {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => LecturerDashboard(name: name),
+            ),
+          );
+        } else {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => StudentDashboard(name: name),
+            ),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
