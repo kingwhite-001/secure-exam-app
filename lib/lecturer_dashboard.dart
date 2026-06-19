@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'create_exam_screen.dart';
+import 'main.dart';
 
 class LecturerDashboard extends StatelessWidget {
   final String name;
@@ -20,7 +22,10 @@ class LecturerDashboard extends StatelessWidget {
             onPressed: () async {
               await FirebaseAuth.instance.signOut();
               if (context.mounted) {
-                Navigator.of(context).popUntil((route) => route.isFirst);
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (context) => const LoginScreen()),
+                      (route) => false,
+                );
               }
             },
           ),
@@ -50,7 +55,14 @@ class LecturerDashboard extends StatelessWidget {
                 width: double.infinity,
                 height: 56,
                 child: ElevatedButton.icon(
-                  onPressed: () {},
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const CreateExamScreen(),
+                      ),
+                    );
+                  },
                   icon: const Icon(Icons.add),
                   label: const Text(
                     'Create New Exam',
