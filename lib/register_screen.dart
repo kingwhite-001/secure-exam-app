@@ -13,6 +13,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _matricController = TextEditingController();
   bool _isLoading = false;
   bool _obscurePassword = true;
   String _selectedRole = 'student';
@@ -23,6 +24,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
         _passwordController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please fill in all fields')),
+      );
+      return;
+    }
+
+    if (_selectedRole == 'student' && _matricController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter your Matric Number')),
       );
       return;
     }
@@ -43,6 +51,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
         'name': _nameController.text.trim(),
         'email': _emailController.text.trim(),
         'role': _selectedRole,
+        'matricNumber': _selectedRole == 'student'
+            ? _matricController.text.trim()
+            : null,
         'createdAt': DateTime.now().toIso8601String(),
       });
 
@@ -177,6 +188,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   fillColor: Colors.white,
                 ),
               ),
+              if (_selectedRole == 'student') ...[
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _matricController,
+                  decoration: InputDecoration(
+                    labelText: 'Matric Number',
+                    prefixIcon: const Icon(Icons.badge_outlined),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    filled: true,
+                    fillColor: Colors.white,
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               TextField(
                 controller: _emailController,

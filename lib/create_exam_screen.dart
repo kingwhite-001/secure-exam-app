@@ -27,6 +27,49 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
   bool _isSaving = false;
   bool _isImporting = false;
 
+  // Course selection
+  List<Map<String, dynamic>> _courses = [];
+  String? _selectedCourseId;
+  String? _selectedCourseName;
+  bool _isLoadingCourses = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCourses();
+  }
+
+  Future<void> _loadCourses() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+
+      final snapshot = await FirebaseFirestore.instance
+          .collection('courses')
+          .where('lecturerId', isEqualTo: user.uid)
+          .get();
+
+      final courses = snapshot.docs.map((doc) {
+        return {
+          'id': doc.id,
+          'name': doc.data()['name'] ?? 'Unnamed Course',
+          'joinCode': doc.data()['joinCode'] ?? '',
+        };
+      }).toList();
+
+      if (mounted) {
+        setState(() {
+          _courses = courses;
+          _isLoadingCourses = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoadingCourses = false);
+      }
+    }
+  }
+
   void _addQuestion() {
     setState(() {
       _questions.add(Question());
@@ -111,6 +154,13 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
   }
 
   Future<void> _saveExam() async {
+    if (_selectedCourseId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a course for this exam')),
+      );
+      return;
+    }
+
     if (_titleController.text.isEmpty || _durationController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please enter exam title and duration')),
@@ -153,6 +203,8 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
         'createdBy': user?.uid,
         'createdAt': DateTime.now().toIso8601String(),
         'questions': questionsData,
+        'courseId': _selectedCourseId,
+        'courseName': _selectedCourseName,
       });
 
       if (mounted) {
@@ -190,6 +242,68 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              const Text(
+                'Select Course',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              _isLoadingCourses
+                  ? const Center(child: CircularProgressIndicator())
+                  : _courses.isEmpty
+                  ? Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF3E0),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.orange),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.warning_amber, color: Colors.orange),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'You have no courses yet. Please create a course first before adding an exam.',
+                      ),
+                    ),
+                  ],
+                ),
+              )
+                  : Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    isExpanded: true,
+                    hint: const Text('Choose a course'),
+                    value: _selectedCourseId,
+                    items: _courses.map((course) {
+                      return DropdownMenuItem<String>(
+                        value: course['id'] as String,
+                        child: Text(
+                          '${course['name']} (${course['joinCode']})',
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      setState(() {
+                        _selectedCourseId = value;
+                        final match = _courses.firstWhere(
+                              (c) => c['id'] == value,
+                        );
+                        _selectedCourseName = match['name'] as String;
+                      });
+                    },
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
               const Text(
                 'Exam Details',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),

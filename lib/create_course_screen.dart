@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -16,16 +17,13 @@ class _CreateCourseScreenState extends State<CreateCourseScreen> {
   final TextEditingController _courseNameController = TextEditingController();
   bool _isSaving = false;
 
-  // Generates a join code like "CSC401-X7K2"
   String _generateJoinCode(String courseName) {
     final random = Random();
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     String prefix = courseName
         .replaceAll(RegExp(r'[^a-zA-Z0-9]'), '')
         .toUpperCase();
-    if (prefix.length > 6) {
-      prefix = prefix.substring(0, 6);
-    }
+    if (prefix.length > 6) prefix = prefix.substring(0, 6);
     String suffix = '';
     for (int i = 0; i < 4; i++) {
       suffix += chars[random.nextInt(chars.length)];
@@ -43,15 +41,11 @@ class _CreateCourseScreenState extends State<CreateCourseScreen> {
       return;
     }
 
-    setState(() {
-      _isSaving = true;
-    });
+    setState(() => _isSaving = true);
 
     try {
       final user = FirebaseAuth.instance.currentUser;
-      if (user == null) {
-        throw Exception('No logged in user found');
-      }
+      if (user == null) throw Exception('No logged in user found');
 
       final joinCode = _generateJoinCode(courseName);
 
@@ -84,9 +78,7 @@ class _CreateCourseScreenState extends State<CreateCourseScreen> {
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.symmetric(
-                      vertical: 12,
-                      horizontal: 16,
-                    ),
+                        vertical: 12, horizontal: 16),
                     decoration: BoxDecoration(
                       color: const Color(0xFFE3F2FD),
                       borderRadius: BorderRadius.circular(8),
@@ -103,13 +95,36 @@ class _CreateCourseScreenState extends State<CreateCourseScreen> {
                       ),
                     ),
                   ),
+                  const SizedBox(height: 12),
+                  // COPY BUTTON
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        Clipboard.setData(ClipboardData(text: joinCode));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Join code "$joinCode" copied!'),
+                            backgroundColor: const Color(0xFF2E7D32),
+                            duration: const Duration(seconds: 2),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.copy, size: 18),
+                      label: const Text('Copy Join Code'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF1565C0),
+                        side: const BorderSide(color: Color(0xFF1565C0)),
+                      ),
+                    ),
+                  ),
                 ],
               ),
               actions: [
                 TextButton(
                   onPressed: () {
-                    Navigator.of(context).pop(); // close dialog
-                    Navigator.of(context).pop(); // go back to dashboard
+                    Navigator.of(context).pop();
+                    Navigator.of(context).pop();
                   },
                   child: const Text('Done'),
                 ),
@@ -125,11 +140,7 @@ class _CreateCourseScreenState extends State<CreateCourseScreen> {
         );
       }
     } finally {
-      if (mounted) {
-        setState(() {
-          _isSaving = false;
-        });
-      }
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
