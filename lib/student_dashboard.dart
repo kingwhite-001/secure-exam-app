@@ -17,6 +17,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
   bool _isLoadingProfile = true;
   List<Map<String, dynamic>> _myCourses = [];
   List<Map<String, dynamic>> _pendingRequests = [];
+  List<Map<String, dynamic>> _availableExams = [];
 
   @override
   void initState() {
@@ -29,15 +30,16 @@ class _StudentDashboardState extends State<StudentDashboard> {
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) return;
 
+      // Load profile
       final userDoc = await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
           .get();
-
       if (userDoc.exists) {
         _matricNumber = userDoc.data()?['matricNumber'] ?? '';
       }
 
+      // Load course requests
       final requestsSnapshot = await FirebaseFirestore.instance
           .collection('course_requests')
           .where('studentId', isEqualTo: user.uid)
@@ -45,13 +47,29 @@ class _StudentDashboardState extends State<StudentDashboard> {
 
       final approved = <Map<String, dynamic>>[];
       final pending = <Map<String, dynamic>>[];
+      final approvedCourseIds = <String>[];
 
       for (var doc in requestsSnapshot.docs) {
         final data = doc.data();
         if (data['status'] == 'approved') {
           approved.add(data);
+          approvedCourseIds.add(data['courseId']);
         } else if (data['status'] == 'pending') {
           pending.add(data);
+        }
+      }
+
+      // Load exams for approved courses
+      final exams = <Map<String, dynamic>>[];
+      for (final courseId in approvedCourseIds) {
+        final examSnapshot = await FirebaseFirestore.instance
+            .collection('exams')
+            .where('courseId', isEqualTo: courseId)
+            .get();
+        for (var doc in examSnapshot.docs) {
+          final data = doc.data();
+          data['examId'] = doc.id;
+          exams.add(data);
         }
       }
 
@@ -59,6 +77,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
         setState(() {
           _myCourses = approved;
           _pendingRequests = pending;
+          _availableExams = exams;
           _isLoadingProfile = false;
         });
       }
@@ -117,7 +136,8 @@ class _StudentDashboardState extends State<StudentDashboard> {
                     color: color)),
             const SizedBox(height: 2),
             Text(label,
-                style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                style:
+                TextStyle(fontSize: 11, color: Colors.grey.shade600),
                 textAlign: TextAlign.center),
           ],
         ),
@@ -138,7 +158,8 @@ class _StudentDashboardState extends State<StudentDashboard> {
             icon: const Icon(Icons.notifications_outlined),
             onPressed: () {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Notifications coming soon')),
+                const SnackBar(
+                    content: Text('Notifications coming soon')),
               );
             },
           ),
@@ -149,7 +170,8 @@ class _StudentDashboardState extends State<StudentDashboard> {
           padding: EdgeInsets.zero,
           children: [
             DrawerHeader(
-              decoration: const BoxDecoration(color: Color(0xFF1565C0)),
+              decoration:
+              const BoxDecoration(color: Color(0xFF1565C0)),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.end,
@@ -174,23 +196,16 @@ class _StudentDashboardState extends State<StudentDashboard> {
               ),
             ),
             ListTile(
-              leading:
-              const Icon(Icons.dashboard, color: Color(0xFF1565C0)),
+              leading: const Icon(Icons.dashboard,
+                  color: Color(0xFF1565C0)),
               title: const Text('Dashboard'),
               onTap: () => Navigator.pop(context),
             ),
             ListTile(
-              leading:
-              const Icon(Icons.school, color: Color(0xFF1565C0)),
+              leading: const Icon(Icons.school,
+                  color: Color(0xFF1565C0)),
               title: const Text('My Courses'),
-              onTap: () {
-                Navigator.pop(context);
-                // Scroll to courses section
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                      content: Text('Scroll down to see your courses')),
-                );
-              },
+              onTap: () => Navigator.pop(context),
             ),
             ListTile(
               leading: const Icon(Icons.group_add,
@@ -220,8 +235,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
               onTap: () {
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                      content: Text('Results coming soon')),
+                  const SnackBar(content: Text('Results coming soon')),
                 );
               },
             ),
@@ -297,8 +311,8 @@ class _StudentDashboardState extends State<StudentDashboard> {
                 const SizedBox(height: 8),
                 const Text(
                   'Are you ready for your next exam?',
-                  style:
-                  TextStyle(fontSize: 14, color: Colors.grey),
+                  style: TextStyle(
+                      fontSize: 14, color: Colors.grey),
                 ),
                 const SizedBox(height: 20),
 
@@ -311,14 +325,18 @@ class _StudentDashboardState extends State<StudentDashboard> {
                         Icons.school,
                         const Color(0xFF1565C0)),
                     const SizedBox(width: 10),
-                    _buildSummaryCard('Exams', '0', Icons.assignment,
+                    _buildSummaryCard(
+                        'Exams',
+                        '${_availableExams.length}',
+                        Icons.assignment,
                         const Color(0xFF2E7D32)),
                     const SizedBox(width: 10),
-                    _buildSummaryCard('Results', '0', Icons.bar_chart,
+                    _buildSummaryCard('Results', '0',
+                        Icons.bar_chart,
                         const Color(0xFF6A1B9A)),
                     const SizedBox(width: 10),
-                    _buildSummaryCard(
-                        'Average', '—', Icons.trending_up,
+                    _buildSummaryCard('Average', '—',
+                        Icons.trending_up,
                         const Color(0xFFD84315)),
                   ],
                 ),
@@ -346,6 +364,158 @@ class _StudentDashboardState extends State<StudentDashboard> {
                     ),
                     onPressed: _goToJoinCourse,
                   ),
+                ),
+                const SizedBox(height: 28),
+
+                // AVAILABLE EXAMS
+                const Text('Available Exams',
+                    style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold)),
+                const SizedBox(height: 12),
+                _availableExams.isEmpty
+                    ? Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius:
+                      BorderRadius.circular(12)),
+                  child: Center(
+                    child: Text(
+                      'No exams available yet',
+                      style: TextStyle(
+                          color: Colors.grey.shade600),
+                    ),
+                  ),
+                )
+                    : Column(
+                  children: _availableExams.map((exam) {
+                    return Container(
+                      margin: const EdgeInsets.only(
+                          bottom: 12),
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius:
+                        BorderRadius.circular(12),
+                        border: Border.all(
+                            color:
+                            Colors.grey.shade300),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding:
+                            const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: const Color(
+                                  0xFF1565C0)
+                                  .withOpacity(0.1),
+                              borderRadius:
+                              BorderRadius.circular(
+                                  10),
+                            ),
+                            child: const Icon(
+                                Icons.quiz_outlined,
+                                color:
+                                Color(0xFF1565C0)),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment:
+                              CrossAxisAlignment
+                                  .start,
+                              children: [
+                                Text(
+                                  exam['title'] ??
+                                      'Untitled Exam',
+                                  style: const TextStyle(
+                                      fontWeight:
+                                      FontWeight
+                                          .bold,
+                                      fontSize: 15),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  exam['courseName'] ??
+                                      '',
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors
+                                          .grey.shade600),
+                                ),
+                                const SizedBox(height: 4),
+                                Row(
+                                  children: [
+                                    const Icon(
+                                        Icons.timer,
+                                        size: 14,
+                                        color: Colors
+                                            .orange),
+                                    const SizedBox(
+                                        width: 4),
+                                    Text(
+                                      '${exam['durationMinutes'] ?? 30} mins',
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors
+                                              .grey
+                                              .shade600),
+                                    ),
+                                    const SizedBox(
+                                        width: 12),
+                                    const Icon(
+                                        Icons.quiz,
+                                        size: 14,
+                                        color: Colors
+                                            .green),
+                                    const SizedBox(
+                                        width: 4),
+                                    Text(
+                                      '${(exam['questions'] as List?)?.length ?? 0} questions',
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors
+                                              .grey
+                                              .shade600),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                          ElevatedButton(
+                            onPressed: () {
+                              ScaffoldMessenger.of(
+                                  context)
+                                  .showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                      'Exam taking coming soon!'),
+                                ),
+                              );
+                            },
+                            style:
+                            ElevatedButton.styleFrom(
+                              backgroundColor:
+                              const Color(0xFF1565C0),
+                              foregroundColor:
+                              Colors.white,
+                              padding:
+                              const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8),
+                            ),
+                            child: const Text('Start',
+                                style: TextStyle(
+                                    fontSize: 13)),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
                 ),
                 const SizedBox(height: 28),
 
@@ -382,7 +552,8 @@ class _StudentDashboardState extends State<StudentDashboard> {
                         borderRadius:
                         BorderRadius.circular(12),
                         border: Border.all(
-                            color: Colors.grey.shade300),
+                            color:
+                            Colors.grey.shade300),
                       ),
                       child: Row(
                         children: [
