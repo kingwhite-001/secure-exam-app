@@ -1,7 +1,8 @@
 import 'dart:async';
-import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'face_service.dart';
 
 class ExamTakingScreen extends StatefulWidget {
   final String examId;
@@ -25,21 +26,37 @@ class ExamTakingScreen extends StatefulWidget {
   State<ExamTakingScreen> createState() => _ExamTakingScreenState();
 }
 
-class _ExamTakingScreenState extends State<ExamTakingScreen> {
+class _ExamTakingScreenState extends State<ExamTakingScreen>
+    with WidgetsBindingObserver {
+  static const int _maxStrikes = 3;
+  static const Duration _checkInterval = Duration(seconds: 20);
+
   int _currentIndex = 0;
-  Map<int, String> _selectedAnswers = {};
+  final Map<int, String> _selectedAnswers = {};
   late int _remainingSeconds;
   Timer? _timer;
+  Timer? _monitorTimer;
   bool _isSubmitting = false;
   bool _examSubmitted = false;
+
+  // Monitoring
+  final FaceService _face = FaceService();
+  bool _cameraReady = false;
+  int _strikes = 0;
+  int _cameraFailures = 0;
+  final List<String> _flags = [];
+  String? _warning;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _remainingSeconds = widget.durationMinutes * 60;
     _startTimer();
+    _startMonitoring();
   }
 
+  // ---------------- TIMER ----------------
   void _startTimer() {
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (_remainingSeconds <= 0) {
@@ -60,10 +77,85 @@ class _ExamTakingScreenState extends State<ExamTakingScreen> {
   Color get _timerColor {
     if (_remainingSeconds <= 60) return Colors.red;
     if (_remainingSeconds <= 300) return Colors.orange;
-    return const Color(0xFF1565C0);
+    return Colors.white;
   }
 
-  Future<void> _submitExam({bool autoSubmit = false}) async {
+  // ---------------- MONITORING ----------------
+  Future<void> _startMonitoring() async {
+    _monitorTimer = Timer.periodic(_checkInterval, (_) => _runFaceCheck());
+    try {
+      await _face.init();
+      if (mounted) setState(() => _cameraReady = true);
+    } catch (e) {
+      _registerStrike('Camera could not be started');
+    }
+  }
+
+  Future<void> _runFaceCheck() async {
+    if (_examSubmitted || _isSubmitting || !mounted) return;
+
+    if (!_face.isReady) {
+      _cameraFailures++;
+      if (_cameraFailures >= 2) {
+        _cameraFailures = 0;
+        _registerStrike('Camera unavailable');
+      }
+      return;
+    }
+
+    try {
+      final result = await _face.check(maxYaw: 40);
+      if (result == null) return;
+      _cameraFailures = 0;
+      if (!result.isOk) _registerStrike(result.message);
+    } catch (_) {
+      _cameraFailures++;
+      if (_cameraFailures >= 2) {
+        _cameraFailures = 0;
+        _registerStrike('Camera unavailable');
+      }
+    }
+  }
+
+  void _registerStrike(String reason) {
+    if (_examSubmitted || _isSubmitting || !mounted) return;
+    _strikes++;
+    _flags.add(reason);
+    _logEvent(reason);
+    setState(() => _warning = 'Warning $_strikes of $_maxStrikes: $reason');
+    if (_strikes >= _maxStrikes) {
+      _submitExam(autoSubmit: true, terminated: true);
+    }
+  }
+
+  Future<void> _logEvent(String reason) async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+      await FirebaseFirestore.instance.collection('exam_events').add({
+        'studentId': user.uid,
+        'examId': widget.examId,
+        'examTitle': widget.examTitle,
+        'courseId': widget.courseId,
+        'reason': reason,
+        'strike': _strikes,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+    } catch (_) {}
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      _registerStrike('Left the exam app');
+    }
+  }
+
+  // ---------------- SUBMIT ----------------
+  Future<void> _submitExam({
+    bool autoSubmit = false,
+    bool terminated = false,
+  }) async {
     if (_isSubmitting || _examSubmitted) return;
 
     if (!autoSubmit) {
@@ -93,22 +185,23 @@ class _ExamTakingScreenState extends State<ExamTakingScreen> {
           ),
         );
         if (confirm != true) return;
+        if (_isSubmitting || _examSubmitted) return;
       }
     }
 
     _timer?.cancel();
+    _monitorTimer?.cancel();
     setState(() => _isSubmitting = true);
 
     try {
       final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return;
+      if (user == null) throw Exception('Not signed in');
 
-      // Calculate score
       int correct = 0;
       for (int i = 0; i < widget.questions.length; i++) {
         final q = widget.questions[i] as Map<String, dynamic>;
         final selected = _selectedAnswers[i];
-        final answer = q['correctAnswer']?.toString().toUpperCase();
+        final answer = q['correctAnswer']?.toString().trim().toUpperCase();
         if (selected != null && selected == answer) correct++;
       }
 
@@ -116,7 +209,6 @@ class _ExamTakingScreenState extends State<ExamTakingScreen> {
       final percentage = total > 0 ? (correct / total * 100).round() : 0;
       final timeTaken = widget.durationMinutes * 60 - _remainingSeconds;
 
-      // Save result to Firestore
       await FirebaseFirestore.instance.collection('exam_results').add({
         'examId': widget.examId,
         'examTitle': widget.examTitle,
@@ -127,11 +219,12 @@ class _ExamTakingScreenState extends State<ExamTakingScreen> {
         'total': total,
         'percentage': percentage,
         'timeTakenSeconds': timeTaken,
-        'answers': _selectedAnswers.map(
-              (k, v) => MapEntry(k.toString(), v),
-        ),
+        'answers': _selectedAnswers.map((k, v) => MapEntry(k.toString(), v)),
         'submittedAt': FieldValue.serverTimestamp(),
         'autoSubmitted': autoSubmit,
+        'strikes': _strikes,
+        'flags': _flags,
+        'terminatedForViolations': terminated,
       });
 
       if (mounted) {
@@ -139,7 +232,7 @@ class _ExamTakingScreenState extends State<ExamTakingScreen> {
           _examSubmitted = true;
           _isSubmitting = false;
         });
-        _showResultScreen(correct, total, percentage);
+        _showResultScreen(correct, total, percentage, terminated);
       }
     } catch (e) {
       if (mounted) {
@@ -151,30 +244,35 @@ class _ExamTakingScreenState extends State<ExamTakingScreen> {
     }
   }
 
-  void _showResultScreen(int correct, int total, int percentage) {
+  void _showResultScreen(
+      int correct, int total, int percentage, bool terminated) {
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        title: const Text(
-          'Exam Submitted!',
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          terminated ? 'Exam Ended' : 'Exam Submitted!',
           textAlign: TextAlign.center,
-          style: TextStyle(fontWeight: FontWeight.bold),
+          style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (terminated) ...[
+              Text(
+                'Your exam was submitted automatically after $_maxStrikes integrity warnings.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.red.shade700, fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+            ],
             Container(
               width: 100,
               height: 100,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: percentage >= 50
-                    ? const Color(0xFF2E7D32)
-                    : Colors.red,
+                color: percentage >= 50 ? const Color(0xFF2E7D32) : Colors.red,
               ),
               child: Center(
                 child: Text(
@@ -188,19 +286,8 @@ class _ExamTakingScreenState extends State<ExamTakingScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            Text(
-              '$correct out of $total correct',
-              style: const TextStyle(fontSize: 16),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              percentage >= 70
-                  ? '🎉 Excellent work!'
-                  : percentage >= 50
-                  ? '👍 Good effort!'
-                  : '📚 Keep studying!',
-              style: const TextStyle(fontSize: 14),
-            ),
+            Text('$correct out of $total correct',
+                style: const TextStyle(fontSize: 16)),
           ],
         ),
         actions: [
@@ -208,8 +295,8 @@ class _ExamTakingScreenState extends State<ExamTakingScreen> {
             width: double.infinity,
             child: ElevatedButton(
               onPressed: () {
-                Navigator.of(context).pop(); // close dialog
-                Navigator.of(context).pop(); // go back to dashboard
+                Navigator.of(context).pop();
+                Navigator.of(context).pop();
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF1565C0),
@@ -225,13 +312,61 @@ class _ExamTakingScreenState extends State<ExamTakingScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
+    _monitorTimer?.cancel();
+    _face.dispose();
     super.dispose();
+  }
+
+  // ---------------- UI ----------------
+  Widget _statusStrip() {
+    final clean = _strikes == 0;
+    return Container(
+      width: double.infinity,
+      color: clean ? const Color(0xFFE8F5E9) : const Color(0xFFFFF3E0),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          Icon(Icons.videocam,
+              size: 16, color: _cameraReady ? Colors.green : Colors.grey),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              _warning ??
+                  (_cameraReady
+                      ? 'Camera monitoring active'
+                      : 'Starting camera...'),
+              style: TextStyle(
+                fontSize: 12,
+                color: clean ? Colors.green.shade800 : Colors.orange.shade900,
+              ),
+            ),
+          ),
+          Text(
+            'Warnings $_strikes/$_maxStrikes',
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final questions = widget.questions;
+
+    if (questions.isEmpty) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Exam'),
+          backgroundColor: const Color(0xFF1565C0),
+          foregroundColor: Colors.white,
+        ),
+        body: const Center(child: Text('This exam has no questions.')),
+      );
+    }
+
     final q = questions[_currentIndex] as Map<String, dynamic>;
     final options = {
       'A': q['optionA']?.toString() ?? '',
@@ -240,15 +375,16 @@ class _ExamTakingScreenState extends State<ExamTakingScreen> {
       'D': q['optionD']?.toString() ?? '',
     };
 
-    return WillPopScope(
-      onWillPop: () async {
-        final confirm = await showDialog<bool>(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        final leave = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
             title: const Text('Leave Exam?'),
             content: const Text(
-              'If you leave now your progress will be lost. Are you sure?',
-            ),
+                'If you leave now your progress will be lost. Are you sure?'),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context, false),
@@ -256,13 +392,13 @@ class _ExamTakingScreenState extends State<ExamTakingScreen> {
               ),
               TextButton(
                 onPressed: () => Navigator.pop(context, true),
-                child: const Text('Leave',
-                    style: TextStyle(color: Colors.red)),
+                child:
+                const Text('Leave', style: TextStyle(color: Colors.red)),
               ),
             ],
           ),
         );
-        return confirm ?? false;
+        if (leave == true && mounted) Navigator.pop(context);
       },
       child: Scaffold(
         backgroundColor: const Color(0xFFF5F7FA),
@@ -273,26 +409,21 @@ class _ExamTakingScreenState extends State<ExamTakingScreen> {
           title: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                widget.examTitle,
-                style: const TextStyle(
-                    fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-              Text(
-                widget.courseName,
-                style: const TextStyle(
-                    fontSize: 12, color: Colors.white70),
-              ),
+              Text(widget.examTitle,
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.bold)),
+              Text(widget.courseName,
+                  style:
+                  const TextStyle(fontSize: 12, color: Colors.white70)),
             ],
           ),
           actions: [
-            // Timer
             Container(
               margin: const EdgeInsets.only(right: 12),
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 6),
+              padding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
-                color: _timerColor.withOpacity(0.2),
+                color: Colors.white.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(color: _timerColor),
               ),
@@ -315,45 +446,38 @@ class _ExamTakingScreenState extends State<ExamTakingScreen> {
         ),
         body: Column(
           children: [
-            // Progress bar
+            _statusStrip(),
             LinearProgressIndicator(
               value: (_currentIndex + 1) / questions.length,
               backgroundColor: Colors.grey.shade300,
-              valueColor: const AlwaysStoppedAnimation<Color>(
-                  Color(0xFF1565C0)),
+              valueColor:
+              const AlwaysStoppedAnimation<Color>(Color(0xFF1565C0)),
               minHeight: 4,
             ),
-
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Question counter
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
                           'Question ${_currentIndex + 1} of ${questions.length}',
                           style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.grey.shade600,
-                            fontWeight: FontWeight.w500,
-                          ),
+                              fontSize: 13,
+                              color: Colors.grey.shade600,
+                              fontWeight: FontWeight.w500),
                         ),
                         Text(
                           '${_selectedAnswers.length} answered',
                           style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.grey.shade600,
-                          ),
+                              fontSize: 13, color: Colors.grey.shade600),
                         ),
                       ],
                     ),
                     const SizedBox(height: 16),
-
-                    // Question text
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(18),
@@ -362,7 +486,7 @@ class _ExamTakingScreenState extends State<ExamTakingScreen> {
                         borderRadius: BorderRadius.circular(14),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.05),
+                            color: Colors.black.withValues(alpha: 0.05),
                             blurRadius: 6,
                             offset: const Offset(0, 3),
                           ),
@@ -371,24 +495,18 @@ class _ExamTakingScreenState extends State<ExamTakingScreen> {
                       child: Text(
                         q['question']?.toString() ?? '',
                         style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          height: 1.5,
-                        ),
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            height: 1.5),
                       ),
                     ),
                     const SizedBox(height: 20),
-
-                    // Options
                     ...options.entries.map((entry) {
                       final isSelected =
                           _selectedAnswers[_currentIndex] == entry.key;
                       return GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            _selectedAnswers[_currentIndex] = entry.key;
-                          });
-                        },
+                        onTap: () => setState(
+                                () => _selectedAnswers[_currentIndex] = entry.key),
                         child: Container(
                           margin: const EdgeInsets.only(bottom: 12),
                           padding: const EdgeInsets.all(16),
@@ -403,14 +521,6 @@ class _ExamTakingScreenState extends State<ExamTakingScreen> {
                                   : Colors.grey.shade300,
                               width: isSelected ? 2 : 1,
                             ),
-                            boxShadow: [
-                              BoxShadow(
-                                color:
-                                Colors.black.withOpacity(0.04),
-                                blurRadius: 4,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
                           ),
                           child: Row(
                             children: [
@@ -422,16 +532,14 @@ class _ExamTakingScreenState extends State<ExamTakingScreen> {
                                   color: isSelected
                                       ? Colors.white
                                       : const Color(0xFF1565C0)
-                                      .withOpacity(0.1),
+                                      .withValues(alpha: 0.1),
                                 ),
                                 child: Center(
                                   child: Text(
                                     entry.key,
-                                    style: TextStyle(
+                                    style: const TextStyle(
                                       fontWeight: FontWeight.bold,
-                                      color: isSelected
-                                          ? const Color(0xFF1565C0)
-                                          : const Color(0xFF1565C0),
+                                      color: Color(0xFF1565C0),
                                     ),
                                   ),
                                 ),
@@ -454,8 +562,6 @@ class _ExamTakingScreenState extends State<ExamTakingScreen> {
                       );
                     }),
                     const SizedBox(height: 20),
-
-                    // Question navigator dots
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
@@ -463,8 +569,7 @@ class _ExamTakingScreenState extends State<ExamTakingScreen> {
                         final answered = _selectedAnswers.containsKey(i);
                         final isCurrent = i == _currentIndex;
                         return GestureDetector(
-                          onTap: () =>
-                              setState(() => _currentIndex = i),
+                          onTap: () => setState(() => _currentIndex = i),
                           child: Container(
                             width: 36,
                             height: 36,
@@ -497,15 +602,13 @@ class _ExamTakingScreenState extends State<ExamTakingScreen> {
                 ),
               ),
             ),
-
-            // Bottom navigation
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: Colors.white,
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.06),
+                    color: Colors.black.withValues(alpha: 0.06),
                     blurRadius: 8,
                     offset: const Offset(0, -3),
                   ),
@@ -513,71 +616,55 @@ class _ExamTakingScreenState extends State<ExamTakingScreen> {
               ),
               child: Row(
                 children: [
-                  // Previous
                   if (_currentIndex > 0)
                     Expanded(
                       child: OutlinedButton.icon(
-                        onPressed: () => setState(
-                                () => _currentIndex--),
+                        onPressed: () => setState(() => _currentIndex--),
                         icon: const Icon(Icons.arrow_back),
                         label: const Text('Previous'),
                         style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                              vertical: 14),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
+                              borderRadius: BorderRadius.circular(10)),
                         ),
                       ),
                     ),
                   if (_currentIndex > 0) const SizedBox(width: 12),
-
-                  // Next or Submit
                   Expanded(
                     child: _currentIndex < questions.length - 1
                         ? ElevatedButton.icon(
-                      onPressed: () => setState(
-                              () => _currentIndex++),
+                      onPressed: () => setState(() => _currentIndex++),
                       icon: const Icon(Icons.arrow_forward),
                       label: const Text('Next'),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor:
-                        const Color(0xFF1565C0),
+                        backgroundColor: const Color(0xFF1565C0),
                         foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                            vertical: 14),
+                        padding:
+                        const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
-                          borderRadius:
-                          BorderRadius.circular(10),
-                        ),
+                            borderRadius: BorderRadius.circular(10)),
                       ),
                     )
                         : ElevatedButton.icon(
-                      onPressed: _isSubmitting
-                          ? null
-                          : () => _submitExam(),
+                      onPressed:
+                      _isSubmitting ? null : () => _submitExam(),
                       icon: _isSubmitting
                           ? const SizedBox(
                         width: 18,
                         height: 18,
                         child: CircularProgressIndicator(
-                          color: Colors.white,
-                          strokeWidth: 2,
-                        ),
+                            color: Colors.white, strokeWidth: 2),
                       )
                           : const Icon(Icons.check_circle),
-                      label: Text(_isSubmitting
-                          ? 'Submitting...'
-                          : 'Submit Exam'),
+                      label: Text(
+                          _isSubmitting ? 'Submitting...' : 'Submit Exam'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF2E7D32),
                         foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                            vertical: 14),
+                        padding:
+                        const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
-                          borderRadius:
-                          BorderRadius.circular(10),
-                        ),
+                            borderRadius: BorderRadius.circular(10)),
                       ),
                     ),
                   ),

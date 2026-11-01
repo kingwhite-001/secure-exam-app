@@ -3,7 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'main.dart';
 import 'join_course_screen.dart';
-import 'exam_taking_screen.dart';
+import 'face_check_screen.dart';
 import 'results_screen.dart';
 
 class StudentDashboard extends StatefulWidget {
@@ -489,7 +489,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
                                 context,
                                 MaterialPageRoute(
                                   builder: (_) =>
-                                      ExamTakingScreen(
+                                      FaceCheckScreen(
                                         examId:
                                         exam['examId'] ?? '',
                                         examTitle:

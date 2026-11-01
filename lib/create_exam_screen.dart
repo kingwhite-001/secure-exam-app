@@ -89,6 +89,7 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['xlsx'],
+        withData: true,
       );
 
       if (result == null || result.files.single.bytes == null) return;
