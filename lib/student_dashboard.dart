@@ -5,6 +5,7 @@ import 'main.dart';
 import 'join_course_screen.dart';
 import 'face_check_screen.dart';
 import 'results_screen.dart';
+import 'face_enroll_screen.dart';
 
 class StudentDashboard extends StatefulWidget {
   final String name;
@@ -247,6 +248,17 @@ class _StudentDashboardState extends State<StudentDashboard> {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                       content: Text('Notifications coming soon')),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.face, color: Color(0xFF1565C0)),
+              title: const Text('Face Enrolment'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const FaceEnrollScreen()),
                 );
               },
             ),

@@ -3,13 +3,22 @@ import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 
-enum FaceStatus { ok, noFace, multipleFaces, lookingAway }
+import 'face_embedder.dart';
+
+enum FaceStatus { ok, noFace, multipleFaces, lookingAway, mismatch }
 
 class FaceCheckResult {
   final FaceStatus status;
   final int faceCount;
+  final double? similarity;
+  final List<double>? embedding;
 
-  const FaceCheckResult(this.status, this.faceCount);
+  const FaceCheckResult(
+      this.status,
+      this.faceCount, {
+        this.similarity,
+        this.embedding,
+      });
 
   bool get isOk => status == FaceStatus.ok;
 
@@ -23,14 +32,20 @@ class FaceCheckResult {
         return 'More than one face detected';
       case FaceStatus.lookingAway:
         return 'Face turned away from the screen';
+      case FaceStatus.mismatch:
+        return 'Face does not match the registered student';
     }
   }
 }
 
 class FaceService {
+  /// Placeholder. We will set this from real test numbers.
+  static const double matchThreshold = 0.60;
+
   CameraController? controller;
   bool _busy = false;
   bool _disposed = false;
+  final FaceEmbedder _embedder = FaceEmbedder();
 
   final FaceDetector _detector = FaceDetector(
     options: FaceDetectorOptions(performanceMode: FaceDetectorMode.fast),
@@ -57,8 +72,14 @@ class FaceService {
   }
 
   /// Takes one snapshot, analyses it on the device, then deletes it.
+  /// - [reference]: the saved face fingerprint to compare against.
+  /// - [wantEmbedding]: return the fingerprint of the face (used for enrolment).
   /// Returns null if a previous check is still running.
-  Future<FaceCheckResult?> check({double maxYaw = 40}) async {
+  Future<FaceCheckResult?> check({
+    double maxYaw = 40,
+    List<double>? reference,
+    bool wantEmbedding = false,
+  }) async {
     if (!isReady || _busy) return null;
     _busy = true;
     XFile? shot;
@@ -73,11 +94,29 @@ class FaceService {
       if (faces.length > 1) {
         return FaceCheckResult(FaceStatus.multipleFaces, faces.length);
       }
-      final yaw = faces.first.headEulerAngleY ?? 0;
+
+      final face = faces.first;
+      final yaw = face.headEulerAngleY ?? 0;
       if (yaw.abs() > maxYaw) {
         return const FaceCheckResult(FaceStatus.lookingAway, 1);
       }
-      return const FaceCheckResult(FaceStatus.ok, 1);
+
+      if (reference == null && !wantEmbedding) {
+        return const FaceCheckResult(FaceStatus.ok, 1);
+      }
+
+      final emb = await _embedder.embed(shot.path, face.boundingBox);
+
+      if (reference != null) {
+        final sim = FaceEmbedder.cosine(emb, reference);
+        if (sim < matchThreshold) {
+          return FaceCheckResult(FaceStatus.mismatch, 1,
+              similarity: sim, embedding: emb);
+        }
+        return FaceCheckResult(FaceStatus.ok, 1,
+            similarity: sim, embedding: emb);
+      }
+      return FaceCheckResult(FaceStatus.ok, 1, embedding: emb);
     } finally {
       if (shot != null) {
         try {
@@ -93,6 +132,7 @@ class FaceService {
     _disposed = true;
     await controller?.dispose();
     controller = null;
+    _embedder.dispose();
     await _detector.close();
   }
 }
