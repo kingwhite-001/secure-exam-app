@@ -11,6 +11,7 @@ class ExamTakingScreen extends StatefulWidget {
   final List<dynamic> questions;
   final String courseId;
   final String courseName;
+  final List<double>? reference;
 
   const ExamTakingScreen({
     super.key,
@@ -20,6 +21,7 @@ class ExamTakingScreen extends StatefulWidget {
     required this.questions,
     required this.courseId,
     required this.courseName,
+    this.reference,
   });
 
   @override
@@ -45,6 +47,7 @@ class _ExamTakingScreenState extends State<ExamTakingScreen>
   int _strikes = 0;
   int _cameraFailures = 0;
   final List<String> _flags = [];
+  final List<double> _similarities = [];
   String? _warning;
 
   @override
@@ -104,10 +107,25 @@ class _ExamTakingScreenState extends State<ExamTakingScreen>
     }
 
     try {
-      final result = await _face.check(maxYaw: 40);
+      final result =
+      await _face.check(maxYaw: 40, reference: widget.reference);
       if (result == null) return;
       _cameraFailures = 0;
-      if (!result.isOk) _registerStrike(result.message);
+      if (result.similarity != null) _similarities.add(result.similarity!);
+
+      if (result.status == FaceStatus.mismatch) {
+        if (FaceService.enforceMatch) {
+          _registerStrike(result.message, similarity: result.similarity);
+        } else {
+          _logEvent(
+            'Face match below threshold (monitor-only)',
+            similarity: result.similarity,
+            countsAsStrike: false,
+          );
+        }
+      } else if (!result.isOk) {
+        _registerStrike(result.message);
+      }
     } catch (_) {
       _cameraFailures++;
       if (_cameraFailures >= 2) {
@@ -117,18 +135,22 @@ class _ExamTakingScreenState extends State<ExamTakingScreen>
     }
   }
 
-  void _registerStrike(String reason) {
+  void _registerStrike(String reason, {double? similarity}) {
     if (_examSubmitted || _isSubmitting || !mounted) return;
     _strikes++;
     _flags.add(reason);
-    _logEvent(reason);
+    _logEvent(reason, similarity: similarity);
     setState(() => _warning = 'Warning $_strikes of $_maxStrikes: $reason');
     if (_strikes >= _maxStrikes) {
       _submitExam(autoSubmit: true, terminated: true);
     }
   }
 
-  Future<void> _logEvent(String reason) async {
+  Future<void> _logEvent(
+      String reason, {
+        double? similarity,
+        bool countsAsStrike = true,
+      }) async {
     try {
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) return;
@@ -138,7 +160,9 @@ class _ExamTakingScreenState extends State<ExamTakingScreen>
         'examTitle': widget.examTitle,
         'courseId': widget.courseId,
         'reason': reason,
-        'strike': _strikes,
+        'strike': countsAsStrike ? _strikes : 0,
+        'countsAsStrike': countsAsStrike,
+        'similarity': similarity,
         'timestamp': FieldValue.serverTimestamp(),
       });
     } catch (_) {}
@@ -209,6 +233,13 @@ class _ExamTakingScreenState extends State<ExamTakingScreen>
       final percentage = total > 0 ? (correct / total * 100).round() : 0;
       final timeTaken = widget.durationMinutes * 60 - _remainingSeconds;
 
+      double? simMin;
+      double? simAvg;
+      if (_similarities.isNotEmpty) {
+        simMin = _similarities.reduce((a, b) => a < b ? a : b);
+        simAvg = _similarities.reduce((a, b) => a + b) / _similarities.length;
+      }
+
       await FirebaseFirestore.instance.collection('exam_results').add({
         'examId': widget.examId,
         'examTitle': widget.examTitle,
@@ -225,6 +256,10 @@ class _ExamTakingScreenState extends State<ExamTakingScreen>
         'strikes': _strikes,
         'flags': _flags,
         'terminatedForViolations': terminated,
+        'faceChecks': _similarities.length,
+        'faceMatchMin': simMin,
+        'faceMatchAvg': simAvg,
+        'faceMatchEnforced': FaceService.enforceMatch,
       });
 
       if (mounted) {
@@ -384,7 +419,7 @@ class _ExamTakingScreenState extends State<ExamTakingScreen>
           builder: (context) => AlertDialog(
             title: const Text('Leave Exam?'),
             content: const Text(
-                'If you leave now your progress will be lost. Are you sure?'),
+                'If you leave now your progress is lost and you will NOT be able to retake this exam. Are you sure?'),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context, false),

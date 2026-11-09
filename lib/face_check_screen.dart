@@ -1,6 +1,9 @@
 import 'package:camera/camera.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'exam_taking_screen.dart';
+import 'face_enroll_screen.dart';
 import 'face_service.dart';
 
 class FaceCheckScreen extends StatefulWidget {
@@ -29,7 +32,9 @@ class _FaceCheckScreenState extends State<FaceCheckScreen> {
   final FaceService _face = FaceService();
   bool _starting = true;
   bool _checking = false;
+  bool _needsEnrol = false;
   String? _error;
+  List<double>? _template;
   String _message =
       'Look straight at the camera, keep your face inside the frame, then tap the button.';
 
@@ -41,6 +46,50 @@ class _FaceCheckScreenState extends State<FaceCheckScreen> {
 
   Future<void> _initCamera() async {
     try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) throw Exception('Not signed in');
+      final db = FirebaseFirestore.instance;
+
+      // One attempt per exam.
+      final attempt = await db
+          .collection('exam_attempts')
+          .doc('${user.uid}_${widget.examId}')
+          .get();
+      final done = await db
+          .collection('exam_results')
+          .where('studentId', isEqualTo: user.uid)
+          .where('examId', isEqualTo: widget.examId)
+          .limit(1)
+          .get();
+      if (attempt.exists || done.docs.isNotEmpty) {
+        if (mounted) {
+          setState(() {
+            _starting = false;
+            _error =
+            'You have already started or completed this exam. Only one attempt is allowed. '
+                'If something went wrong, contact your lecturer.';
+          });
+        }
+        return;
+      }
+
+      // Saved face template (if the student has enrolled).
+      final profile = await db.collection('users').doc(user.uid).get();
+      final raw = profile.data()?['faceTemplate'];
+      if (raw is List && raw.isNotEmpty) {
+        _template = raw.map((e) => (e as num).toDouble()).toList();
+      }
+
+      if (FaceService.enforceMatch && _template == null) {
+        if (mounted) {
+          setState(() {
+            _starting = false;
+            _needsEnrol = true;
+          });
+        }
+        return;
+      }
+
       await _face.init();
       if (mounted) setState(() => _starting = false);
     } catch (e) {
@@ -48,10 +97,24 @@ class _FaceCheckScreenState extends State<FaceCheckScreen> {
         setState(() {
           _starting = false;
           _error =
-          'Camera unavailable. Allow camera permission, then go back and try again.\n\n$e';
+          'Could not start the identity check. Check your internet and camera permission, then go back and try again.\n\n$e';
         });
       }
     }
+  }
+
+  Future<void> _enrolNow() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const FaceEnrollScreen()),
+    );
+    if (!mounted) return;
+    setState(() {
+      _starting = true;
+      _needsEnrol = false;
+      _error = null;
+    });
+    await _initCamera();
   }
 
   Future<void> _verify() async {
@@ -61,10 +124,10 @@ class _FaceCheckScreenState extends State<FaceCheckScreen> {
     });
 
     try {
-      final result = await _face.check(maxYaw: 25);
+      final result = await _face.check(maxYaw: 25, reference: _template);
       if (!mounted) return;
 
-      if (result == null || !result.isOk) {
+      if (result == null || !result.passes) {
         setState(() {
           _checking = false;
           _message = result == null
@@ -73,6 +136,20 @@ class _FaceCheckScreenState extends State<FaceCheckScreen> {
         });
         return;
       }
+
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) throw Exception('Not signed in');
+
+      // Lock the attempt before the exam opens.
+      await FirebaseFirestore.instance
+          .collection('exam_attempts')
+          .doc('${user.uid}_${widget.examId}')
+          .set({
+        'studentId': user.uid,
+        'examId': widget.examId,
+        'startedAt': FieldValue.serverTimestamp(),
+        'startSimilarity': result.similarity,
+      });
 
       // Release the camera so the exam screen can use it.
       await _face.dispose();
@@ -88,6 +165,7 @@ class _FaceCheckScreenState extends State<FaceCheckScreen> {
             questions: widget.questions,
             courseId: widget.courseId,
             courseName: widget.courseName,
+            reference: _template,
           ),
         ),
       );
@@ -112,6 +190,30 @@ class _FaceCheckScreenState extends State<FaceCheckScreen> {
       return const SizedBox(
         height: 300,
         child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_needsEnrol) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.orange.shade50,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          children: [
+            Text(
+              'You have not enrolled your face yet. Enrol once, then you can take exams.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.orange.shade900),
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              onPressed: _enrolNow,
+              icon: const Icon(Icons.face),
+              label: const Text('Enrol my face'),
+            ),
+          ],
+        ),
       );
     }
     if (_error != null) {
@@ -143,7 +245,7 @@ class _FaceCheckScreenState extends State<FaceCheckScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final ready = !_starting && _error == null;
+    final ready = !_starting && _error == null && !_needsEnrol;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
@@ -176,6 +278,14 @@ class _FaceCheckScreenState extends State<FaceCheckScreen> {
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 14, color: Colors.grey.shade800),
               ),
+              if (ready && _template == null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Tip: enrol your face from the menu (Face Enrolment) to switch on identity matching.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12, color: Colors.orange.shade800),
+                ),
+              ],
               const SizedBox(height: 16),
               SizedBox(
                 width: double.infinity,
@@ -189,7 +299,8 @@ class _FaceCheckScreenState extends State<FaceCheckScreen> {
                         color: Colors.white, strokeWidth: 2),
                   )
                       : const Icon(Icons.verified_user),
-                  label: Text(_checking ? 'Checking...' : 'Verify & Start Exam'),
+                  label:
+                  Text(_checking ? 'Checking...' : 'Verify & Start Exam'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF1565C0),
                     foregroundColor: Colors.white,
@@ -202,9 +313,9 @@ class _FaceCheckScreenState extends State<FaceCheckScreen> {
               ),
               const SizedBox(height: 16),
               Text(
-                'During the exam the camera takes a snapshot every 20 seconds. '
-                    'Snapshots are analysed on your phone and deleted immediately. '
-                    'They are never uploaded. You get 3 warnings; after that the exam is submitted automatically.',
+                'You have ONE attempt at this exam. During the exam the camera takes a snapshot '
+                    'every 20 seconds. Snapshots are analysed on your phone and deleted immediately; '
+                    'they are never uploaded. You get 3 warnings; after that the exam is submitted automatically.',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
               ),

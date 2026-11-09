@@ -22,6 +22,11 @@ class FaceCheckResult {
 
   bool get isOk => status == FaceStatus.ok;
 
+  /// True if the check should let the student continue.
+  /// A mismatch only blocks when FaceService.enforceMatch is on.
+  bool get passes =>
+      isOk || (status == FaceStatus.mismatch && !FaceService.enforceMatch);
+
   String get message {
     switch (status) {
       case FaceStatus.ok:
@@ -39,8 +44,12 @@ class FaceCheckResult {
 }
 
 class FaceService {
-  /// Placeholder. We will set this from real test numbers.
+  /// Placeholder. We set this from real test numbers.
   static const double matchThreshold = 0.60;
+
+  /// false = monitor-only: match scores are recorded but never block or
+  /// penalise anyone. Switch to true after calibrating on a real phone.
+  static const bool enforceMatch = false;
 
   CameraController? controller;
   bool _busy = false;
@@ -72,8 +81,6 @@ class FaceService {
   }
 
   /// Takes one snapshot, analyses it on the device, then deletes it.
-  /// - [reference]: the saved face fingerprint to compare against.
-  /// - [wantEmbedding]: return the fingerprint of the face (used for enrolment).
   /// Returns null if a previous check is still running.
   Future<FaceCheckResult?> check({
     double maxYaw = 40,
@@ -105,16 +112,24 @@ class FaceService {
         return const FaceCheckResult(FaceStatus.ok, 1);
       }
 
-      final emb = await _embedder.embed(shot.path, face.boundingBox);
+      List<double>? emb;
+      try {
+        emb = await _embedder.embed(shot.path, face.boundingBox);
+      } catch (_) {
+        // Enrolment or enforced matching: show the real error.
+        if (reference == null || enforceMatch) rethrow;
+        // Monitor-only: fall back to the plain presence check.
+      }
+      if (emb == null) return const FaceCheckResult(FaceStatus.ok, 1);
 
       if (reference != null) {
         final sim = FaceEmbedder.cosine(emb, reference);
-        if (sim < matchThreshold) {
-          return FaceCheckResult(FaceStatus.mismatch, 1,
-              similarity: sim, embedding: emb);
-        }
-        return FaceCheckResult(FaceStatus.ok, 1,
-            similarity: sim, embedding: emb);
+        return FaceCheckResult(
+          sim < matchThreshold ? FaceStatus.mismatch : FaceStatus.ok,
+          1,
+          similarity: sim,
+          embedding: emb,
+        );
       }
       return FaceCheckResult(FaceStatus.ok, 1, embedding: emb);
     } finally {
