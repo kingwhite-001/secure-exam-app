@@ -1,8 +1,8 @@
-import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:excel/excel.dart' hide Border;
+import 'package:file_picker/file_picker.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
 
 class Question {
   final TextEditingController questionController = TextEditingController();
@@ -26,6 +26,7 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
   final List<Question> _questions = [Question()];
   bool _isSaving = false;
   bool _isImporting = false;
+  String _examType = 'Exam';
 
   // Course selection
   List<Map<String, dynamic>> _courses = [];
@@ -70,6 +71,17 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
     }
   }
 
+  void _showMessage(String message, {Color? color}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: color,
+        duration: const Duration(seconds: 6),
+      ),
+    );
+  }
+
   void _addQuestion() {
     setState(() {
       _questions.add(Question());
@@ -84,6 +96,15 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
     }
   }
 
+  // ---------------- EXCEL IMPORT ----------------
+  String _norm(String s) =>
+      s.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+
+  String _cell(List<Data?> row, int i) {
+    if (i < 0 || i >= row.length) return '';
+    return row[i]?.value?.toString().trim() ?? '';
+  }
+
   Future<void> _importFromExcel() async {
     try {
       final result = await FilePicker.platform.pickFiles(
@@ -92,80 +113,153 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
         withData: true,
       );
 
-      if (result == null || result.files.single.bytes == null) return;
+      if (result == null) return;
+
+      final bytes = result.files.single.bytes;
+      if (bytes == null) {
+        _showMessage(
+            'Could not read that file. Try again, or move it into your phone storage first.');
+        return;
+      }
 
       setState(() => _isImporting = true);
 
-      final bytes = result.files.single.bytes!;
       final excel = Excel.decodeBytes(bytes);
-
       final sheet = excel.tables[excel.tables.keys.first];
-      if (sheet == null) return;
+      if (sheet == null || sheet.maxRows < 2) {
+        _showMessage(
+            'The spreadsheet looks empty. Row 1 must hold the headings and the questions start in row 2.');
+        return;
+      }
 
-      List<Question> importedQuestions = [];
+      // Work out which column holds what, using the headings in row 1.
+      final headers =
+      sheet.row(0).map((c) => _norm(c?.value?.toString() ?? '')).toList();
 
-      for (int i = 1; i < sheet.maxRows; i++) {
+      int find(List<String> names) =>
+          headers.indexWhere((h) => names.contains(h));
+
+      var qCol =
+      find(['question', 'questions', 'questiontext', 'questiontitle']);
+      if (qCol == -1) {
+        qCol = headers.indexWhere((h) =>
+        h.contains('question') &&
+            !h.contains('no') &&
+            !h.contains('num') &&
+            !h.contains('id'));
+      }
+      var aCol = find(['a', 'optiona', 'choicea', 'opta']);
+      var bCol = find(['b', 'optionb', 'choiceb', 'optb']);
+      var cCol = find(['c', 'optionc', 'choicec', 'optc']);
+      var dCol = find(['d', 'optiond', 'choiced', 'optd']);
+      var ansCol = find([
+        'correctanswer',
+        'correctoption',
+        'correct',
+        'answer',
+        'ans',
+        'key',
+        'correctans',
+        'rightanswer',
+      ]);
+      if (ansCol == -1) {
+        ansCol = headers.indexWhere((h) => h.contains('correct'));
+      }
+
+      if (qCol == -1 ||
+          aCol == -1 ||
+          bCol == -1 ||
+          cCol == -1 ||
+          dCol == -1 ||
+          ansCol == -1) {
+        // Headings not recognised: go by position, skipping a leading
+        // serial-number column if there is one.
+        const serial = [
+          '',
+          'sn',
+          'sno',
+          's',
+          'no',
+          'num',
+          'number',
+          'id',
+          'qno',
+          'serialno',
+          'serialnumber',
+          'questionno',
+          'questionnumber',
+        ];
+        final base =
+        (headers.isNotEmpty && serial.contains(headers.first)) ? 1 : 0;
+        qCol = base;
+        aCol = base + 1;
+        bCol = base + 2;
+        cCol = base + 3;
+        dCol = base + 4;
+        ansCol = base + 5;
+      }
+
+      final validAnswer = RegExp(r'^[ABCD][\.\)]?$');
+      final imported = <Question>[];
+      var skipped = 0;
+
+      for (var i = 1; i < sheet.maxRows; i++) {
         final row = sheet.row(i);
-        if (row.isEmpty || row[0]?.value == null) continue;
+        final text = _cell(row, qCol);
+        if (text.isEmpty) continue;
+
+        final answer = _cell(row, ansCol).toUpperCase();
+        if (!validAnswer.hasMatch(answer)) {
+          skipped++;
+          continue;
+        }
 
         final q = Question();
-        q.questionController.text = row[0]?.value?.toString() ?? '';
-        q.optionAController.text = row.length > 1 ? (row[1]?.value?.toString() ?? '') : '';
-        q.optionBController.text = row.length > 2 ? (row[2]?.value?.toString() ?? '') : '';
-        q.optionCController.text = row.length > 3 ? (row[3]?.value?.toString() ?? '') : '';
-        q.optionDController.text = row.length > 4 ? (row[4]?.value?.toString() ?? '') : '';
-        final answer = row.length > 5 ? (row[5]?.value?.toString() ?? 'A') : 'A';
-        q.correctAnswer = answer.trim().toUpperCase();
-
-        if (q.questionController.text.isNotEmpty) {
-          importedQuestions.add(q);
-        }
+        q.questionController.text = text;
+        q.optionAController.text = _cell(row, aCol);
+        q.optionBController.text = _cell(row, bCol);
+        q.optionCController.text = _cell(row, cCol);
+        q.optionDController.text = _cell(row, dCol);
+        q.correctAnswer = answer[0];
+        imported.add(q);
       }
 
-      if (importedQuestions.isNotEmpty) {
-        setState(() {
-          _questions.clear();
-          _questions.addAll(importedQuestions);
-        });
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('${importedQuestions.length} questions imported successfully!'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No valid questions found in the file')),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Import failed: ${e.toString()}')),
+      if (imported.isEmpty) {
+        final found = headers.where((h) => h.isNotEmpty).join(', ');
+        _showMessage(
+          'No valid questions found. Headings I found: $found. '
+              'Expected: Question, A, B, C, D, Correct Answer (a single letter A to D).',
         );
+        return;
       }
+
+      setState(() {
+        _questions.clear();
+        _questions.addAll(imported);
+      });
+
+      _showMessage(
+        '${imported.length} questions imported.'
+            '${skipped > 0 ? ' $skipped row(s) skipped because Correct Answer was not A, B, C or D.' : ''}'
+            ' Please review them before publishing.',
+        color: Colors.green,
+      );
+    } catch (e) {
+      _showMessage('Import failed: ${e.toString()}');
     } finally {
       if (mounted) setState(() => _isImporting = false);
     }
   }
 
+  // ---------------- SAVE ----------------
   Future<void> _saveExam() async {
     if (_selectedCourseId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select a course for this exam')),
-      );
+      _showMessage('Please select a course for this exam');
       return;
     }
 
     if (_titleController.text.isEmpty || _durationController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter exam title and duration')),
-      );
+      _showMessage('Please enter exam title and duration');
       return;
     }
 
@@ -175,9 +269,7 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
           q.optionBController.text.isEmpty ||
           q.optionCController.text.isEmpty ||
           q.optionDController.text.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please fill in all question fields')),
-        );
+        _showMessage('Please fill in all question fields');
         return;
       }
     }
@@ -206,28 +298,21 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
         'questions': questionsData,
         'courseId': _selectedCourseId,
         'courseName': _selectedCourseName,
+        'examType': _examType,
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Exam created successfully!'),
-            backgroundColor: Colors.green,
-          ),
-        );
+        _showMessage('Exam created successfully!', color: Colors.green);
         Navigator.pop(context);
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
-      }
+      _showMessage('Error: ${e.toString()}');
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
   }
 
+  // ---------------- UI ----------------
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -334,6 +419,31 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
                   fillColor: Colors.white,
                 ),
               ),
+              const SizedBox(height: 16),
+              const Text(
+                'Assessment Type',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 10,
+                children: [
+                  for (final type in ['CA', 'Exam'])
+                    ChoiceChip(
+                      label: Text(
+                        type == 'CA' ? 'CA (Continuous Assessment)' : 'Final Exam',
+                      ),
+                      selected: _examType == type,
+                      selectedColor: const Color(0xFF1565C0),
+                      checkmarkColor: Colors.white,
+                      labelStyle: TextStyle(
+                        color:
+                        _examType == type ? Colors.white : Colors.black87,
+                      ),
+                      onSelected: (_) => setState(() => _examType = type),
+                    ),
+                ],
+              ),
               const SizedBox(height: 20),
               Container(
                 width: double.infinity,
@@ -359,7 +469,9 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
                     ),
                     const SizedBox(height: 6),
                     const Text(
-                      'Columns: Question | Option A | Option B | Option C | Option D | Correct Answer',
+                      'Row 1 = headings: Question | A | B | C | D | Correct Answer. '
+                          'Questions start in row 2. Correct Answer must be a single letter (A to D). '
+                          'An extra number column on the left is fine.',
                       style: TextStyle(fontSize: 12, color: Colors.grey),
                     ),
                     const SizedBox(height: 12),
@@ -371,7 +483,8 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
                             ? const SizedBox(
                           width: 16,
                           height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                          child:
+                          CircularProgressIndicator(strokeWidth: 2),
                         )
                             : const Icon(Icons.file_upload_outlined),
                         label: Text(_isImporting
@@ -418,8 +531,8 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
                           ),
                           if (_questions.length > 1)
                             IconButton(
-                              icon: const Icon(Icons.delete,
-                                  color: Colors.red),
+                              icon:
+                              const Icon(Icons.delete, color: Colors.red),
                               onPressed: () => _removeQuestion(index),
                             ),
                         ],

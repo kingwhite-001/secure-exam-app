@@ -6,6 +6,7 @@ import 'create_course_screen.dart';
 import 'edit_profile_screen.dart';
 import 'pending_requests_screen.dart';
 import 'main.dart';
+import 'class_register_screen.dart';
 
 class LecturerDashboard extends StatefulWidget {
   final String name;
@@ -200,6 +201,17 @@ class _LecturerDashboardState extends State<LecturerDashboard> {
               onTap: () {
                 Navigator.pop(context);
                 _goToEditProfile();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.fact_check, color: Color(0xFF1565C0)),
+              title: const Text('Class Register'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ClassRegisterScreen()),
+                );
               },
             ),
             const Divider(),
