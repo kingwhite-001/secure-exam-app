@@ -22,6 +22,8 @@ class _LecturerDashboardState extends State<LecturerDashboard> {
   String _bio = '';
   int _avatarIndex = 0;
   bool _isLoadingProfile = true;
+  String? _loadedName;
+  String get _name => _loadedName ?? widget.name;
   int _coursesCount = 0;
   int _examsCount = 0;
   int _pendingCount = 0;
@@ -43,6 +45,8 @@ class _LecturerDashboardState extends State<LecturerDashboard> {
         final data = doc.data()!;
         if (mounted) setState(() {
           _institution = data['institution'] ?? '';
+          final n = (data['name'] ?? '').toString().trim();
+          _loadedName = n.isEmpty ? null : n;
           _department = data['department'] ?? '';
           _bio = data['bio'] ?? '';
           _avatarIndex = data['avatarIndex'] ?? 0;
@@ -151,7 +155,7 @@ class _LecturerDashboardState extends State<LecturerDashboard> {
                         color: Colors.white, size: 26),
                   ),
                   const SizedBox(height: 10),
-                  Text(widget.name,
+                  Text(_name,
                       style: const TextStyle(
                           color: Colors.white,
                           fontSize: 16,
@@ -264,7 +268,7 @@ class _LecturerDashboardState extends State<LecturerDashboard> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(widget.name,
+                            Text(_name,
                                 style: const TextStyle(
                                     fontSize: 19,
                                     fontWeight: FontWeight.bold,
@@ -343,7 +347,7 @@ class _LecturerDashboardState extends State<LecturerDashboard> {
                         context,
                         MaterialPageRoute(
                             builder: (_) => CreateCourseScreen(
-                                lecturerName: widget.name))),
+                                lecturerName: _name))),
                     icon: const Icon(Icons.school),
                     label: const Text('Create Course',
                         style: TextStyle(

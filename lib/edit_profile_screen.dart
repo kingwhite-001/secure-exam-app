@@ -1,6 +1,6 @@
-import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
 
 // The 8 default avatar options: icon + background color pairs
 const List<IconData> avatarIcons = [
@@ -33,6 +33,7 @@ class EditProfileScreen extends StatefulWidget {
 }
 
 class _EditProfileScreenState extends State<EditProfileScreen> {
+  final TextEditingController _nameController = TextEditingController();
   final TextEditingController _institutionController = TextEditingController();
   final TextEditingController _departmentController = TextEditingController();
   final TextEditingController _bioController = TextEditingController();
@@ -56,14 +57,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             .doc(user.uid)
             .get();
 
-        if (doc.exists) {
-          final data = doc.data();
-          if (data != null) {
-            _institutionController.text = data['institution'] ?? '';
-            _departmentController.text = data['department'] ?? '';
-            _bioController.text = data['bio'] ?? '';
-            _selectedAvatar = data['avatarIndex'] ?? 0;
-          }
+        final data = doc.data();
+        if (data != null) {
+          _nameController.text = (data['name'] ?? '').toString();
+          _institutionController.text = (data['institution'] ?? '').toString();
+          _departmentController.text = (data['department'] ?? '').toString();
+          _bioController.text = (data['bio'] ?? '').toString();
+          final idx = (data['avatarIndex'] as num?)?.toInt() ?? 0;
+          _selectedAvatar = (idx >= 0 && idx < avatarIcons.length) ? idx : 0;
         }
       }
     } catch (e) {
@@ -78,6 +79,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _saveProfile() async {
+    final newName =
+    _nameController.text.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (newName.length < 3) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter your full name')),
+      );
+      return;
+    }
+
     setState(() {
       _isSaving = true;
     });
@@ -87,13 +97,28 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (user == null) {
         throw Exception('No logged in user found');
       }
+      final db = FirebaseFirestore.instance;
 
-      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+      await db.collection('users').doc(user.uid).set({
+        'name': newName,
         'institution': _institutionController.text.trim(),
         'department': _departmentController.text.trim(),
         'bio': _bioController.text.trim(),
         'avatarIndex': _selectedAvatar,
       }, SetOptions(merge: true));
+
+      // Keep the lecturer's name on their courses up to date.
+      final courses = await db
+          .collection('courses')
+          .where('lecturerId', isEqualTo: user.uid)
+          .get();
+      if (courses.docs.isNotEmpty) {
+        final batch = db.batch();
+        for (final d in courses.docs) {
+          batch.update(d.reference, {'lecturerName': newName});
+        }
+        await batch.commit();
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -118,10 +143,20 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   @override
   void dispose() {
+    _nameController.dispose();
     _institutionController.dispose();
     _departmentController.dispose();
     _bioController.dispose();
     super.dispose();
+  }
+
+  InputDecoration _decoration(String hint) {
+    return InputDecoration(
+      hintText: hint,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+      ),
+    );
   }
 
   @override
@@ -195,18 +230,24 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             ),
             const SizedBox(height: 28),
             const Text(
+              'Full Name',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _nameController,
+              textCapitalization: TextCapitalization.words,
+              decoration: _decoration('e.g. Dr. Jane Okafor'),
+            ),
+            const SizedBox(height: 20),
+            const Text(
               'Institution',
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
             const SizedBox(height: 8),
             TextField(
               controller: _institutionController,
-              decoration: InputDecoration(
-                hintText: 'e.g. Nasarawa State University, Keffi',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
+              decoration: _decoration('e.g. Nasarawa State University, Keffi'),
             ),
             const SizedBox(height: 20),
             const Text(
@@ -216,12 +257,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             const SizedBox(height: 8),
             TextField(
               controller: _departmentController,
-              decoration: InputDecoration(
-                hintText: 'e.g. Computer Science',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
+              decoration: _decoration('e.g. Computer Science'),
             ),
             const SizedBox(height: 20),
             const Text(
@@ -232,12 +268,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             TextField(
               controller: _bioController,
               maxLines: 3,
-              decoration: InputDecoration(
-                hintText: 'e.g. Lecturer specializing in Software Engineering',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
+              decoration:
+              _decoration('e.g. Lecturer specializing in Software Engineering'),
             ),
             const SizedBox(height: 28),
             SizedBox(

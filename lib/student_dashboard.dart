@@ -6,6 +6,7 @@ import 'join_course_screen.dart';
 import 'face_check_screen.dart';
 import 'results_screen.dart';
 import 'face_enroll_screen.dart';
+import 'edit_student_profile_screen.dart';
 
 class StudentDashboard extends StatefulWidget {
   final String name;
@@ -18,6 +19,8 @@ class StudentDashboard extends StatefulWidget {
 class _StudentDashboardState extends State<StudentDashboard> {
   String _matricNumber = '';
   bool _isLoadingProfile = true;
+  String? _loadedName;
+  String get _name => _loadedName ?? widget.name;
   List<Map<String, dynamic>> _myCourses = [];
   List<Map<String, dynamic>> _pendingRequests = [];
   List<Map<String, dynamic>> _availableExams = [];
@@ -42,6 +45,8 @@ class _StudentDashboardState extends State<StudentDashboard> {
           .get();
 
       if (userDoc.exists) {
+        final n = (userDoc.data()?['name'] ?? '').toString().trim();
+        _loadedName = n.isEmpty ? null : n;
         _matricNumber =
             userDoc.data()?['matricNumber']?.toString() ?? '';
       }
@@ -110,7 +115,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
       context,
       MaterialPageRoute(
         builder: (_) => JoinCourseScreen(
-          studentName: widget.name,
+          studentName: _name,
           matricNumber: _matricNumber,
         ),
       ),
@@ -193,7 +198,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
                         color: Color(0xFF1565C0), size: 30),
                   ),
                   const SizedBox(height: 10),
-                  Text(widget.name,
+                  Text(_name,
                       style: const TextStyle(
                           color: Colors.white,
                           fontSize: 16,
@@ -262,6 +267,20 @@ class _StudentDashboardState extends State<StudentDashboard> {
                 );
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.edit, color: Color(0xFF1565C0)),
+              title: const Text('Edit Profile'),
+              onTap: () async {
+                Navigator.pop(context);
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const EditStudentProfileScreen(),
+                  ),
+                );
+                _loadData();
+              },
+            ),
             const Divider(),
             ListTile(
               leading: const Icon(Icons.logout, color: Colors.red),
@@ -313,7 +332,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
                           crossAxisAlignment:
                           CrossAxisAlignment.start,
                           children: [
-                            Text(widget.name,
+                            Text(_name,
                                 style: const TextStyle(
                                     fontSize: 18,
                                     fontWeight: FontWeight.bold,
