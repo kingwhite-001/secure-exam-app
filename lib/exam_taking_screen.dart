@@ -46,6 +46,7 @@ class _ExamTakingScreenState extends State<ExamTakingScreen>
   bool _cameraReady = false;
   int _strikes = 0;
   int _cameraFailures = 0;
+  int _mismatchRun = 0;
   final List<String> _flags = [];
   final List<double> _similarities = [];
   String? _warning;
@@ -112,13 +113,15 @@ class _ExamTakingScreenState extends State<ExamTakingScreen>
       if (result == null) return;
       _cameraFailures = 0;
       if (result.similarity != null) _similarities.add(result.similarity!);
+      if (result.status != FaceStatus.mismatch) _mismatchRun = 0;
 
       if (result.status == FaceStatus.mismatch) {
-        if (FaceService.enforceMatch) {
+        if (FaceService.enforceMatch && ++_mismatchRun >= 2) {
+          _mismatchRun = 0;
           _registerStrike(result.message, similarity: result.similarity);
         } else {
           _logEvent(
-            'Face match below threshold (monitor-only)',
+            'Face match below threshold (first miss, no warning yet)',
             similarity: result.similarity,
             countsAsStrike: false,
           );

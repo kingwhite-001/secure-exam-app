@@ -49,7 +49,7 @@ class FaceService {
 
   /// false = monitor-only: match scores are recorded but never block or
   /// penalise anyone. Switch to true after calibrating on a real phone.
-  static const bool enforceMatch = false;
+  static const bool enforceMatch = true;
 
   CameraController? controller;
   bool _busy = false;

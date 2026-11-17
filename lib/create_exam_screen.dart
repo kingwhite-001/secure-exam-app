@@ -3,6 +3,7 @@ import 'package:excel/excel.dart' hide Border;
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'question_importer.dart';
 
 class Question {
   final TextEditingController questionController = TextEditingController();
@@ -97,6 +98,73 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
   }
 
   // ---------------- EXCEL IMPORT ----------------
+  Future<void> _importFromExcel() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['xlsx', 'csv'],
+        withData: true,
+      );
+      if (result == null) return;
+
+      final file = result.files.single;
+      final bytes = file.bytes;
+      if (bytes == null) {
+        _showMessage(
+            'Could not read that file. Move it into your phone storage and try again.');
+        return;
+      }
+
+      setState(() => _isImporting = true);
+
+      final outcome = importQuestionsFromFile(file.name, bytes);
+
+      if (outcome.questions.isEmpty) {
+        _showMessage(
+          outcome.headers.isEmpty
+              ? 'The file looks empty. Row 1 must hold the headings and the questions start in row 2.'
+              : 'No valid questions found. Headings I found: ${outcome.headers.join(', ')}. '
+              'Expected: Question, A, B, C, D, Correct Answer (a single letter A to D).',
+        );
+        return;
+      }
+
+      final imported = outcome.questions.map((iq) {
+        final q = Question();
+        q.questionController.text = iq.question;
+        q.optionAController.text = iq.a;
+        q.optionBController.text = iq.b;
+        q.optionCController.text = iq.c;
+        q.optionDController.text = iq.d;
+        q.correctAnswer = iq.answer;
+        return q;
+      }).toList();
+
+      setState(() {
+        _questions.clear();
+        _questions.addAll(imported);
+      });
+
+      _showMessage(
+        '${imported.length} questions imported.'
+            '${outcome.skipped > 0 ? ' ${outcome.skipped} row(s) skipped because Correct Answer was not A, B, C or D.' : ''}'
+            ' Please review them before publishing.',
+        color: Colors.green,
+      );
+    } on FormatException catch (e) {
+      if (e.message == 'XLSX_UNREADABLE') {
+        _showMessage(
+            'This Excel file could not be read (some phone apps save files in a way this app cannot open). '
+                'Fix: open it in Microsoft Excel and save it again as .xlsx, or save/download it as CSV and upload the CSV file instead.');
+      } else {
+        _showMessage('Import failed: ${e.message}');
+      }
+    } catch (e) {
+      _showMessage('Import failed: $e');
+    } finally {
+      if (mounted) setState(() => _isImporting = false);
+    }
+  }
   String _norm(String s) =>
       s.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
 
@@ -105,7 +173,7 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
     return row[i]?.value?.toString().trim() ?? '';
   }
 
-  Future<void> _importFromExcel() async {
+  Future<void> _importFromExcelOld() async {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
@@ -489,7 +557,7 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
                             : const Icon(Icons.file_upload_outlined),
                         label: Text(_isImporting
                             ? 'Importing...'
-                            : 'Upload Excel File (.xlsx)'),
+                            : 'Upload Excel/CSV File (.xlsx)'),
                         style: OutlinedButton.styleFrom(
                           padding: const EdgeInsets.symmetric(vertical: 12),
                           backgroundColor: Colors.white,

@@ -24,6 +24,8 @@ class _StudentDashboardState extends State<StudentDashboard> {
   List<Map<String, dynamic>> _myCourses = [];
   List<Map<String, dynamic>> _pendingRequests = [];
   List<Map<String, dynamic>> _availableExams = [];
+  int _resultCount = 0;
+  int? _averagePct;
 
   @override
   void initState() {
@@ -74,6 +76,19 @@ class _StudentDashboardState extends State<StudentDashboard> {
         }
       }
 
+      final resultSnap = await FirebaseFirestore.instance
+          .collection('exam_results')
+          .where('studentId', isEqualTo: user.uid)
+          .get();
+      final resultCount = resultSnap.docs.length;
+      int? averagePct;
+      if (resultCount > 0) {
+        final sum = resultSnap.docs.fold<int>(
+          0,
+              (s, d) => s + ((d.data()['percentage'] as num?)?.toInt() ?? 0),
+        );
+        averagePct = (sum / resultCount).round();
+      }
       final exams = <Map<String, dynamic>>[];
       for (final courseId in approvedCourseIds) {
         final examSnapshot = await FirebaseFirestore.instance
@@ -92,6 +107,8 @@ class _StudentDashboardState extends State<StudentDashboard> {
           _myCourses = approved;
           _pendingRequests = pending;
           _availableExams = exams;
+          _resultCount = resultCount;
+          _averagePct = averagePct;
           _isLoadingProfile = false;
         });
       }
@@ -374,11 +391,11 @@ class _StudentDashboardState extends State<StudentDashboard> {
                         Icons.assignment,
                         const Color(0xFF2E7D32)),
                     const SizedBox(width: 10),
-                    _buildSummaryCard('Results', '0',
+                    _buildSummaryCard('Results', '$_resultCount',
                         Icons.bar_chart,
                         const Color(0xFF6A1B9A)),
                     const SizedBox(width: 10),
-                    _buildSummaryCard('Average', '—',
+                    _buildSummaryCard('Average', _averagePct == null ? '—' : '$_averagePct%',
                         Icons.trending_up,
                         const Color(0xFFD84315)),
                   ],

@@ -7,6 +7,7 @@ import 'edit_profile_screen.dart';
 import 'pending_requests_screen.dart';
 import 'main.dart';
 import 'class_register_screen.dart';
+import 'reset_attempt_screen.dart';
 
 class LecturerDashboard extends StatefulWidget {
   final String name;
@@ -215,6 +216,17 @@ class _LecturerDashboardState extends State<LecturerDashboard> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => const ClassRegisterScreen()),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.lock_reset, color: Color(0xFF1565C0)),
+              title: const Text('Reset Exam Attempt'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ResetAttemptScreen()),
                 );
               },
             ),

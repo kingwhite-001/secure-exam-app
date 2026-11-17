@@ -114,6 +114,7 @@ class _ClassRegisterScreenState extends State<ClassRegisterScreen> {
         db
             .collection('course_requests')
             .where('courseId', isEqualTo: courseId)
+            .where('lecturerId', isEqualTo: FirebaseAuth.instance.currentUser?.uid)
             .where('status', isEqualTo: 'approved')
             .get(),
         db.collection('exams').where('courseId', isEqualTo: courseId).get(),
